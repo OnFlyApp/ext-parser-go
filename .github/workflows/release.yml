@@ -1,0 +1,67 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.1"
+      - name: Check the tag
+        id: ver
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          python3 - <<'PY' "$version"
+          import re, sys
+          ver = sys.argv[1]
+          if re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", ver) is None:
+              sys.exit("tag must be vMAJOR.MINOR.PATCH without a pre-release suffix")
+          PY
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Test and build
+        run: |
+          go test .
+          CGO_ENABLED=0 GOOS=wasip1 GOARCH=wasm go build -buildvcs=false -o go-parser.wasm .
+      - name: Checksum
+        id: sum
+        run: echo "sha=$(sha256sum go-parser.wasm | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release download "$tag" --pattern go-parser.wasm --output existing.wasm
+            if ! cmp -s existing.wasm go-parser.wasm; then
+              echo "release $tag already has different bytes" >&2
+              exit 1
+            fi
+          else
+            gh release create "$tag" go-parser.wasm --title "$tag" --notes "Go parser ${{ steps.ver.outputs.version }}"
+          fi
+      - name: Update the registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          git clone https://github.com/OnFlyApp/registry.git registry-repo
+          python3 registry-repo/scripts/upsert.py registry-repo/registry.json \
+            --plugin go \
+            --version "${{ steps.ver.outputs.version }}" \
+            --url "https://github.com/OnFlyApp/ext-parser-go/releases/download/${GITHUB_REF_NAME}/go-parser.wasm" \
+            --sha256 "${{ steps.sum.outputs.sha }}" \
+            --extensions .go
+          git -C registry-repo add -- registry.json
+          if git -C registry-repo diff --cached --quiet; then
+            exit 0
+          fi
+          git -C registry-repo -c user.name="onfly-release" -c user.email="github-actions[bot]@users.noreply.github.com" \
+            commit -m "Add go ${{ steps.ver.outputs.version }}."
+          git -C registry-repo remote set-url origin "https://x-access-token:${REGISTRY_TOKEN}@github.com/OnFlyApp/registry.git"
+          git -C registry-repo pull --rebase origin main
+          git -C registry-repo push origin main
