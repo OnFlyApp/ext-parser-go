@@ -24,7 +24,7 @@ Metadata: `name`, `package`, and `receiver` for methods. Chunks carry no line nu
 
 | Key | On | Value |
 |---|---|---|
-| `param_types` | `function`, `method` | the named types of the parameters, in order, comma separated, no repeats. Pointers, slices, arrays, channels, variadics and generic instances are looked through; builtins, maps and function types give nothing. A type from another package is `import/path.Type` (`github.com/acme/app/commands/v2.ClawBack`), one of the same package is `Type`. |
+| `param_types` | `function`, `method` | the named types of the parameters, in order, comma separated, no repeats. Pointers, slices, arrays, channels, variadics and generic instances are looked through; builtins, maps and function types give nothing. A type from another package is `import/path.Type` (`github.com/acme/app/commands/v2.CancelOrder`), one of the same package is `Type`. |
 | `handles` | `function`, `method` | the type a handler entry handles: the name is `Handle`, `Execute`, `Handle*` or `On*` (or lower case), and the first parameter after a `context.Context` is a named type. |
 
 The host uses `handles` to connect the code that builds that type to the handler.

@@ -34,7 +34,7 @@ import (
 
 type Service struct{}
 
-func (s *Service) Handle(ctx context.Context, cmd *cmds.ClawBack, retries int) error { return nil }
+func (s *Service) Handle(ctx context.Context, cmd *cmds.CancelOrder, retries int) error { return nil }
 func (s *Service) OnRefunded(e RefundedEvent) {}
 func (s *Service) Render(name string, v View, m map[string]Other) {}
 func Execute() {}
@@ -47,7 +47,7 @@ func Execute() {}
 	for _, c := range chunks {
 		by[c.Metadata["name"]] = c.Metadata
 	}
-	const claw = "github.com/acme/app/commands/v2.ClawBack"
+	const claw = "github.com/acme/app/commands/v2.CancelOrder"
 	for _, tc := range []struct{ name, types, handles string }{
 		{"Handle", "context.Context," + claw, claw},
 		{"OnRefunded", "RefundedEvent", "RefundedEvent"},
