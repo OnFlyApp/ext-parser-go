@@ -38,7 +38,7 @@ The host uses `handles` to connect the code that builds that type to the handler
 ## Build
 
 ```bash
-make wasm     # bin/go-parser.wasm (Go 1.27+)
+make wasm     # bin/go-parser.wasm (Go 1.27+, reproducible: -trimpath, no build id; the release job refuses different bytes for a tag)
 make native   # bin/go-parser
 go test ./...
 ```

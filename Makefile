@@ -9,7 +9,7 @@ all: wasm native
 wasm:
 	@echo "Building WASM plugin (wasip1/wasm)..."
 	@mkdir -p bin
-	GOOS=wasip1 GOARCH=wasm go build -buildvcs=false -o $(WASM_BIN) main.go
+	CGO_ENABLED=0 GOOS=wasip1 GOARCH=wasm go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -o $(WASM_BIN) .
 	@echo "WASM binary compiled successfully to $(WASM_BIN)"
 
 native:
