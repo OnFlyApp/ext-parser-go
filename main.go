@@ -8,6 +8,9 @@ import (
 	"go/token"
 	"io"
 	"os"
+	"path"
+	"strconv"
+	"strings"
 )
 
 // Chunk represents the universal contract defined in the Onfly SDD
@@ -53,6 +56,7 @@ func parse(filePath string, src []byte) ([]Chunk, error) {
 
 	// Initialize as an empty slice so JSON serializes as [] instead of null
 	chunks := []Chunk{}
+	imports := importPaths(node)
 
 	ast.Inspect(node, func(n ast.Node) bool {
 		switch x := n.(type) {
@@ -93,6 +97,14 @@ func parse(filePath string, src []byte) ([]Chunk, error) {
 				}
 			}
 
+			if types := paramTypes(x.Type.Params, imports); len(types) > 0 {
+				chunk.Metadata["param_types"] = strings.Join(types, ",")
+			}
+			if h := handles(x, imports); h != "" {
+				chunk.Metadata["handles"] = h
+			}
+			chunk.Metadata["package"] = node.Name.Name
+
 			chunks = append(chunks, chunk)
 
 		// 2. EXTRACT STRUCTS AND INTERFACES
@@ -124,7 +136,8 @@ func parse(filePath string, src []byte) ([]Chunk, error) {
 							Type:     chunkType,
 							Content:  string(src[start:end]),
 							Metadata: map[string]string{
-								"name": typeSpec.Name.Name,
+								"name":    typeSpec.Name.Name,
+								"package": node.Name.Name,
 							},
 						})
 					}
@@ -135,4 +148,108 @@ func parse(filePath string, src []byte) ([]Chunk, error) {
 	})
 
 	return chunks, nil
+}
+
+// importPaths maps the name each import is used under to its path.
+func importPaths(f *ast.File) map[string]string {
+	out := map[string]string{}
+	for _, imp := range f.Imports {
+		p, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			continue
+		}
+		name := path.Base(p)
+		if v := name; len(v) > 1 && v[0] == 'v' && strings.Trim(v[1:], "0123456789") == "" {
+			name = path.Base(path.Dir(p)) // github.com/x/y/v2 is used as y
+		}
+		if imp.Name != nil {
+			name = imp.Name.Name
+		}
+		out[name] = p
+	}
+	return out
+}
+
+var builtinTypes = map[string]bool{
+	"bool": true, "byte": true, "complex64": true, "complex128": true, "error": true, "float32": true, "float64": true,
+	"int": true, "int8": true, "int16": true, "int32": true, "int64": true, "rune": true, "string": true,
+	"uint": true, "uint8": true, "uint16": true, "uint32": true, "uint64": true, "uintptr": true, "any": true,
+}
+
+// typeName is the named type an expression stands for, looking through
+// pointers, slices, arrays, channels, variadics and generic instances: Foo for
+// *Foo, and path/to/pkg.Foo for pkg.Foo. Builtins, maps and function types give "".
+func typeName(e ast.Expr, imports map[string]string) string {
+	switch t := e.(type) {
+	case *ast.Ident:
+		if builtinTypes[t.Name] {
+			return ""
+		}
+		return t.Name
+	case *ast.SelectorExpr:
+		if x, ok := t.X.(*ast.Ident); ok {
+			if p, ok := imports[x.Name]; ok {
+				return p + "." + t.Sel.Name
+			}
+			return x.Name + "." + t.Sel.Name
+		}
+	case *ast.StarExpr:
+		return typeName(t.X, imports)
+	case *ast.ArrayType:
+		return typeName(t.Elt, imports)
+	case *ast.Ellipsis:
+		return typeName(t.Elt, imports)
+	case *ast.ChanType:
+		return typeName(t.Value, imports)
+	case *ast.IndexExpr:
+		return typeName(t.X, imports)
+	case *ast.IndexListExpr:
+		return typeName(t.X, imports)
+	}
+	return ""
+}
+
+// paramTypes lists, in order and without repeats, the named types of the parameters.
+func paramTypes(fields *ast.FieldList, imports map[string]string) []string {
+	if fields == nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range fields.List {
+		if n := typeName(f.Type, imports); n != "" && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// handles is the type a function or method handles when it is a handler or
+// listener entry (Handle, Execute, Handle*, On*): its first parameter after a
+// context.Context. A function with no such parameter handles nothing.
+func handles(fn *ast.FuncDecl, imports map[string]string) string {
+	name := fn.Name.Name
+	ok := name == "Handle" || name == "Execute" || name == "handle" || name == "execute"
+	for _, prefix := range []string{"Handle", "On", "handle", "on"} {
+		if len(name) > len(prefix) && strings.HasPrefix(name, prefix) && name[len(prefix)] >= 'A' && name[len(prefix)] <= 'Z' {
+			ok = true
+		}
+	}
+	if !ok || fn.Type.Params == nil {
+		return ""
+	}
+	for _, f := range fn.Type.Params.List {
+		n := typeName(f.Type, imports)
+		if n == "context.Context" || n == "" && isContext(f.Type) {
+			continue
+		}
+		return n
+	}
+	return ""
+}
+
+func isContext(e ast.Expr) bool {
+	sel, ok := e.(*ast.SelectorExpr)
+	return ok && sel.Sel.Name == "Context"
 }
